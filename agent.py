@@ -212,6 +212,9 @@ if __name__ == "__main__":
         if not topic:
             print("Please enter a topic.\n")
             continue
-        print_brief(run_agent(topic))
+        try:
+            print_brief(run_agent(topic))
+        except Exception as e:
+            print(f"\nSomething went wrong: {type(e).__name__}: {e}")
         
         print("\n" + "-" * 40 + "\n")
