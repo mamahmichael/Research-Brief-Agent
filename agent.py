@@ -9,6 +9,7 @@ Flow:
                      model cannot invent a source.
 """
 import time
+import re
 
 from dotenv import load_dotenv
 from ddgs import DDGS
@@ -20,16 +21,41 @@ from google.genai import errors
 load_dotenv()
 client = genai.Client()
 
+class QuotaExceededError(Exception):
+    """Raised when Gemini's free-tier quota or rate limit is hit."""
+
+
+def retry_hint(message: str) -> str | None:
+    """Turns 'retry in 2h15m28.6s' into 'about 2h 15m'."""
+    m = re.search(r"retry in (?:(\d+)h)?(?:(\d+)m)?([\d.]+)s", message)
+    if not m:
+        return None
+    hours, minutes, seconds = int(m.group(1) or 0), int(m.group(2) or 0), float(m.group(3))
+    if hours:
+        return f"about {hours}h {minutes}m"
+    if minutes:
+        return f"about {minutes}m"
+    return f"about {max(1, round(seconds))}s"
+
 def generate(**kwargs):
     """Calls Gemini, retrying on temporary server errors (5xx)."""
     for delay in (2, 5, 10, None):
         try:
             return client.models.generate_content(**kwargs)
         except errors.ServerError:
-            if delay is None:  # out of retries: let the error surface
+            if delay is None:
                 raise
             print(f"  (Gemini is busy, retrying in {delay}s)")
             time.sleep(delay)
+        except errors.ClientError as e:
+            if getattr(e, "code", None) != 429:
+                raise  # not a quota problem: let it surface as-is
+            text = str(e)
+            hint = retry_hint(text)
+            when = f" Try again in {hint}." if hint else ""
+            if "PerDay" in text:
+                raise QuotaExceededError(f"Daily quota reached.{when}") from e
+            raise QuotaExceededError(f"Rate limit reached.{when}") from e
 
 MODEL = "gemini-3.6-flash"
 MAX_TOOL_CALLS = 3  # hard limit on research steps per question
@@ -226,7 +252,8 @@ if __name__ == "__main__":
             continue
         try:
             print_brief(run_agent(topic))
+        except QuotaExceededError as e: # prints only quota errors, does not raise them
+            print(f"\n{e}")
         except Exception as e:
-            print(f"\nSomething went wrong: {type(e).__name__}: {e}")
-        
+            print(f"\nSomething went wrong: {type(e).__name__}: {e}") # Other errors are printed but not raised        
         print("\n" + "-" * 40 + "\n")
