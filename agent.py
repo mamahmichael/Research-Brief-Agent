@@ -15,9 +15,21 @@ from ddgs import DDGS
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
+from google.genai import errors
 
 load_dotenv()
 client = genai.Client()
+
+def generate(**kwargs):
+    """Calls Gemini, retrying on temporary server errors (5xx)."""
+    for delay in (2, 5, 10, None):
+        try:
+            return client.models.generate_content(**kwargs)
+        except errors.ServerError:
+            if delay is None:  # out of retries: let the error surface
+                raise
+            print(f"  (Gemini is busy, retrying in {delay}s)")
+            time.sleep(delay)
 
 MODEL = "gemini-3.6-flash"
 MAX_TOOL_CALLS = 3  # hard limit on research steps per question
@@ -131,7 +143,7 @@ def research(topic: str) -> tuple[str, dict[int, Source]]:
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=topic)])]
 
     for step in range(MAX_TOOL_CALLS):
-        response = client.models.generate_content(
+        response = generate(
             model=MODEL, contents=contents, config=search_config
         )
         if not response.function_calls:
@@ -160,7 +172,7 @@ def write_brief(topic: str, evidence: str, sources: dict[int, Source]) -> Brief:
         f"Question: {topic}\n\n"
         f"Search results:\n{evidence or '(no searches were run)'}"
     )
-    response = client.models.generate_content(
+    response = generate(
         model=MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
