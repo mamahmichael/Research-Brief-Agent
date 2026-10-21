@@ -137,19 +137,19 @@ def research(topic: str) -> tuple[str, dict[int, Source]]:
         if not response.function_calls:
             break  # model is done searching
 
-        call = response.function_calls[0]
-        query = ((call.args or {}).get("query") or "").strip()
-        print(f"[step {step + 1}] Searching: {query}")
-        result_text = run_search(query, sources) if query else "No query was given."
-        evidence.append(f"Search: {query}\n{result_text}")
+        # Answer every tool call in this turn (the model may request several)
+        reply_parts = []
+        for call in response.function_calls:
+            query = ((call.args or {}).get("query") or "").strip()
+            print(f"[step {step + 1}] Searching: {query}")
+            result_text = run_search(query, sources) if query else "No query was given."
+            evidence.append(f"Search: {query}\n{result_text}")
+            reply_parts.append(types.Part.from_function_response(
+                name=call.name, response={"result": result_text}
+            ))
 
         contents.append(response.candidates[0].content)
-        contents.append(types.Content(
-            role="user",
-            parts=[types.Part.from_function_response(
-                name=call.name, response={"result": result_text}
-            )],
-        ))
+        contents.append(types.Content(role="user", parts=reply_parts))
 
     return "\n\n".join(evidence), sources
 
