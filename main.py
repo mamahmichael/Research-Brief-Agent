@@ -6,6 +6,7 @@ Docs: http://127.0.0.1:8000/docs
 import logging
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 # research logic lives in agent.py
@@ -32,6 +33,12 @@ class BriefRequest(BaseModel):
         description="The topic or question to research.",
         examples=["What are the main benefits and risks of intermittent fasting?"],
     )
+
+
+# send the bare address to the docs page instead of a 404
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health")
