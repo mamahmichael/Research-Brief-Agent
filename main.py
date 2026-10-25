@@ -4,9 +4,12 @@ Run:  uvicorn main:app --reload
 Docs: http://127.0.0.1:8000/docs
 """
 import logging
+import os
+import secrets
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.responses import RedirectResponse
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, ConfigDict, Field
 
 # research logic lives in agent.py
@@ -14,6 +17,21 @@ from agent import Brief, QuotaExceededError, run_agent
 
 logger = logging.getLogger("research_brief_api")
 logging.basicConfig(level=logging.INFO)
+
+# callers send their key in the X-API-Key header; shows an Authorize button in /docs
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def require_api_key(key: str | None = Security(api_key_header)) -> None:
+    expected = os.getenv("API_KEY")
+    if not expected:
+        # no key configured: refuse everything rather than run open
+        logger.error("API_KEY is not set")
+        raise HTTPException(status_code=503, detail="Service is not configured.")
+    # compare_digest avoids leaking the key through response timing
+    if not key or not secrets.compare_digest(key.encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key.")
+
 
 app = FastAPI(
     title="Research Brief Agent",
@@ -49,7 +67,7 @@ def health() -> dict:
 
 # plain def, not async: the agent makes blocking calls, and FastAPI runs
 # plain functions in a worker thread
-@app.post("/brief", response_model=Brief)
+@app.post("/brief", response_model=Brief, dependencies=[Depends(require_api_key)])
 def create_brief(request: BriefRequest) -> Brief:
     logger.info("brief requested: %r", request.topic)
     try:
